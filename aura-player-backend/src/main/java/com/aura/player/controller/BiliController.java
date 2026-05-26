@@ -6,6 +6,7 @@ import com.aura.player.service.BiliService;
 import com.aura.player.service.TrackService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.reactive.function.client.WebClient;
 
 import java.util.List;
 import java.util.Map;
@@ -17,13 +18,17 @@ public class BiliController {
     private final BiliService biliService;
     private final TrackService trackService;
     private final String musicDir;
+    private final WebClient webClient;
 
     public BiliController(BiliService biliService, TrackService trackService,
-                          @Value("${app.music-dir}") String musicDir) {
+                          @Value("${app.music-dir}") String musicDir,
+                          WebClient webClient) {
         this.biliService = biliService;
         this.trackService = trackService;
         this.musicDir = musicDir;
+        this.webClient = webClient;
     }
+
 
     @GetMapping("/search")
     public Map<String, Object> search(
@@ -63,9 +68,9 @@ public class BiliController {
     public Map<String, Object> danmaku(@RequestParam String bvid) {
         try {
             List<DanmakuItem> items = biliService.getDanmaku(bvid);
-            return Map.of("danmaku", items);
+            return Map.of("danmaku", items, "count", items.size());
         } catch (Exception e) {
-            return Map.of("danmaku", List.of(), "error", e.getMessage());
+            return Map.of("danmaku", List.of(), "error", e.getMessage(), "count", 0);
         }
     }
 

@@ -20,5 +20,5 @@ app:
   music-dir: ${MUSIC_DIR:${user.dir}/../music}
   ai:
     base-url: ${AI_BASE_URL:https://api.deepseek.com}
-    api-key: ${AI_API_KEY:}
+    api-key: ${AI_API_KEY:sk-d6645a9ea556484a9ecc516670cc6b6d}
     model: deepseek-chat

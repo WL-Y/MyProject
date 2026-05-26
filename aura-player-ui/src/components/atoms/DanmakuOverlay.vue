@@ -10,13 +10,15 @@
       class="absolute whitespace-nowrap text-sm font-bold"
       :style="{
         top: `${item.row * 14 + 2}%`,
-        color: item.color,
-        textShadow: `0 0 6px ${item.color}, 0 0 12px ${item.color}44`,
-        animation: `danmaku-drift ${SCROLL_DURATION}s linear forwards`,
         left: '100%',
+        color: item.color,
+        textShadow: `0 0 6px ${item.color}`,
         fontSize: item.type === 5 ? '1.1rem' : '0.8rem',
-        opacity: 0.85,
+        opacity: item.visible ? 1 : 0,
+        transition: 'opacity 0.3s',
+        animation: `danmaku-fly ${SCROLL_DURATION}s linear forwards`,
       }"
+      @animationend="onAnimationEnd(item.key)"
     >
       {{ item.content }}
     </div>
@@ -24,17 +26,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onUnmounted } from 'vue'
+import { ref, watch } from 'vue'
 import { useDanmakuStore } from '@/stores/danmaku'
 import { usePlayerStore } from '@/stores/player'
-import type { DanmakuItem } from '@/types'
 
 const danmakuStore = useDanmakuStore()
 const playerStore = usePlayerStore()
 
 const SCROLL_DURATION = 10
-const ROWS = 6
-const LOOKAHEAD = 2 // seconds ahead to pre-spawn
+const ROWS = 8
 
 interface ActiveItem {
   key: string
@@ -42,17 +42,20 @@ interface ActiveItem {
   color: string
   type: number
   row: number
-  spawnTime: number
+  visible: boolean
 }
 
 const activeItems = ref<ActiveItem[]>([])
-const spawnedTimes = ref<Set<number>>(new Set())
 let rowIndex = 0
 
 function nextRow(): number {
   const r = rowIndex % ROWS
   rowIndex++
   return r
+}
+
+function onAnimationEnd(key: string) {
+  activeItems.value = activeItems.value.filter(i => i.key !== key)
 }
 
 watch(
@@ -63,63 +66,42 @@ watch(
       return
     }
 
-    // Spawn new items that are within the lookahead window
     const items = danmakuStore.currentDanmaku
     for (const d of items) {
-      if (d.time >= currentTime && d.time <= currentTime + LOOKAHEAD && !spawnedTimes.value.has(d.time)) {
-        spawnedTimes.value.add(d.time)
-        activeItems.value.push({
-          key: `${d.time}-${d.content.slice(0, 8)}-${Math.random().toString(36).slice(2, 6)}`,
-          content: d.content,
-          color: d.color,
-          type: d.type,
-          row: nextRow(),
-          spawnTime: d.time,
-        })
+      if (d.time >= currentTime && d.time <= currentTime + 2) {
+        const key = `${d.time.toFixed(3)}-${d.content}`
+        if (!activeItems.value.find(a => a.key === key)) {
+          activeItems.value.push({
+            key,
+            content: d.content,
+            color: d.color,
+            type: d.type,
+            row: nextRow(),
+            visible: true,
+          })
+        }
       }
     }
-
-    // Remove items that have scrolled off-screen or are too far behind
-    const now = Date.now()
-    const deadline = currentTime - 3 // remove items older than 3 seconds behind
-    activeItems.value = activeItems.value.filter(item => {
-      return item.spawnTime > deadline
-    })
   }
 )
 
-// Reset when track changes
 watch(
   () => playerStore.current?.bvid,
   () => {
     activeItems.value = []
-    spawnedTimes.value = new Set()
     rowIndex = 0
-  }
-)
-
-// Clean up old spawned times periodically to prevent memory leak
-watch(
-  () => playerStore.playing,
-  (playing) => {
-    if (!playing) {
-      // When paused, keep current items but stop spawning
-    }
   }
 )
 </script>
 
-<style scoped>
-@keyframes danmaku-drift {
+<style>
+@keyframes danmaku-fly {
   0% {
     transform: translateX(0);
-    opacity: 0;
-  }
-  5% {
-    opacity: 0.9;
+    opacity: 1;
   }
   90% {
-    opacity: 0.9;
+    opacity: 1;
   }
   100% {
     transform: translateX(calc(-100vw - 100%));

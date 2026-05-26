@@ -5,6 +5,7 @@ import com.aura.player.model.DanmakuItem;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.client.WebClient;
 
 import java.io.*;
 import java.net.URI;
@@ -19,6 +20,8 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.zip.Inflater;
+import java.util.zip.GZIPInputStream;
 
 @Service
 public class BiliService {
@@ -31,6 +34,7 @@ public class BiliService {
 
     private final HttpClient httpClient = HttpClient.newHttpClient();
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final WebClient webClient;
 
     private String cachedImgKey;
     private String cachedSubKey;
@@ -39,10 +43,14 @@ public class BiliService {
 
     private static final long KEY_TTL = 12 * 60 * 60 * 1000L;
 
+    public BiliService(WebClient.Builder webClientBuilder) {
+        this.webClient = webClientBuilder.build();
+    }
+
     public List<BiliVideo> searchVideos(String keyword, int page) throws Exception {
         var keys = getWbiKeys();
         String mixinKey = getMixinKey(keys[0], keys[1]);
-        String buvid3 = ensureBuvid3();
+        String buvid3 = getBuvid3();
 
         Map<String, String> params = new LinkedHashMap<>();
         params.put("search_type", "video");
@@ -115,7 +123,7 @@ public class BiliService {
     public String[] getVideoInfo(String bvid) throws Exception {
         var keys = getWbiKeys();
         String mixinKey = getMixinKey(keys[0], keys[1]);
-        String buvid3 = ensureBuvid3();
+        String buvid3 = getBuvid3();
 
         Map<String, String> params = new LinkedHashMap<>();
         params.put("bvid", bvid);
@@ -147,7 +155,7 @@ public class BiliService {
     }
 
     public String getAudioUrl(String bvid, String cid) throws Exception {
-        String buvid3 = ensureBuvid3();
+        String buvid3 = getBuvid3();
 
         Map<String, String> params = new LinkedHashMap<>();
         params.put("bvid", bvid);
@@ -191,7 +199,7 @@ public class BiliService {
         String title = info[1]; // Always use the real title from API
 
         String audioUrl = getAudioUrl(bvid, cid);
-        String buvid3 = ensureBuvid3();
+        String buvid3 = getBuvid3();
 
         // Create output directory
         String dateDir = java.time.LocalDate.now().toString().replace("-", "");
@@ -235,20 +243,21 @@ public class BiliService {
     public List<DanmakuItem> getDanmaku(String bvid) throws Exception {
         String[] info = getVideoInfo(bvid);
         String cid = info[0];
-        String buvid3 = ensureBuvid3();
+        String buvid3 = getBuvid3();
 
-        HttpRequest req = HttpRequest.newBuilder()
-                .uri(URI.create("https://api.bilibili.com/x/v1/dm/list.so?oid=" + cid))
+        // Use WebClient for auto-decompression
+        String xml = webClient.get()
+                .uri("https://api.bilibili.com/x/v1/dm/list.so?oid=" + cid)
                 .header("User-Agent", UA)
-                .header("Accept", "*/*")
+                .header("Accept-Encoding", "gzip, deflate")
                 .header("Origin", "https://www.bilibili.com")
                 .header("Referer", "https://www.bilibili.com/")
                 .header("Cookie", "buvid3=" + buvid3)
-                .GET()
-                .build();
+                .retrieve()
+                .bodyToMono(String.class)
+                .block();
 
-        HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
-        String xml = resp.body();
+        if (xml == null || xml.isBlank()) return List.of();
 
         List<DanmakuItem> items = new ArrayList<>();
         Pattern pattern = Pattern.compile("<d p=\"([^\"]*)\"[^>]*>([^<]*)</d>");
@@ -274,7 +283,7 @@ public class BiliService {
             return new String[]{cachedImgKey, cachedSubKey};
         }
 
-        String buvid3 = ensureBuvid3();
+        String buvid3 = getBuvid3();
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create("https://api.bilibili.com/x/web-interface/nav"))
                 .header("User-Agent", UA)
@@ -296,7 +305,7 @@ public class BiliService {
         return new String[]{cachedImgKey, cachedSubKey};
     }
 
-    private synchronized String ensureBuvid3() throws Exception {
+    public synchronized String getBuvid3() throws Exception {
         if (cachedBuvid3 != null) return cachedBuvid3;
 
         HttpRequest req = HttpRequest.newBuilder()
@@ -385,5 +394,37 @@ public class BiliService {
             sb.append(String.format("%02x", b));
         }
         return sb.toString();
+    }
+
+    private byte[] decompressGzip(byte[] data) {
+        if (data == null || data.length < 2) return data;
+        // Check for gzip magic bytes
+        if (data[0] == (byte)0x1f && data[1] == (byte)0x8b) {
+            try (ByteArrayInputStream bis = new ByteArrayInputStream(data);
+                 GZIPInputStream gis = new GZIPInputStream(bis);
+                 ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = gis.read(buf)) != -1) bos.write(buf, 0, n);
+                return bos.toByteArray();
+            } catch (IOException e) {
+                return data;
+            }
+        }
+        // Try deflate (raw)
+        try {
+            Inflater inflater = new Inflater(true);
+            inflater.setInput(data);
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            while (!inflater.finished()) {
+                int n = inflater.inflate(buf);
+                bos.write(buf, 0, n);
+            }
+            inflater.end();
+            return bos.toByteArray();
+        } catch (Exception e) {
+            return data;
+        }
     }
 }
