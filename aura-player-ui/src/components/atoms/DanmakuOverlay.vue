@@ -33,7 +33,7 @@ import { usePlayerStore } from '@/stores/player'
 const danmakuStore = useDanmakuStore()
 const playerStore = usePlayerStore()
 
-const SCROLL_DURATION = 10
+const SCROLL_DURATION = 15
 const ROWS = 8
 
 interface ActiveItem {
